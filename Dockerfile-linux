@@ -1,0 +1,86 @@
+# syntax=docker/dockerfile:1
+#
+# Linux (musl static) build for tcp-transfer.
+#
+# Build:
+#   docker build --pull=false -f Dockerfile-linux -t tcp-transfer:linux .
+#
+#   --pull=false is recommended when the builder image is already present
+#   locally, so the build does not depend on the registry being reachable.
+#
+# Extract the static binary to ./dist:
+#   docker create --name tcp-transfer-tmp tcp-transfer:linux
+#   MSYS_NO_PATHCONV=1 docker cp tcp-transfer-tmp:/tcp-transfer D:/path/to/dist/tcp-transfer
+#   docker rm tcp-transfer-tmp
+#
+# The result is a fully static x86_64-unknown-linux-musl binary that runs on
+# any Linux distribution (glibc or musl) without extra runtime libraries.
+
+FROM zhcoder-docker-registry.com:8000/builder/rust:1.96-slim-musl AS builder
+
+WORKDIR /build
+
+# Keep the toolchain quiet and independent from any local config copied in.
+ENV CARGO_TERM_COLOR=never \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup
+
+# 1) Make sure the musl target is installed in the image.
+RUN rustup target add x86_64-unknown-linux-musl
+
+# 2) Force a fully static link.
+#
+# The base image's ~/.cargo/config.toml pins a per-target `rustflags` array for
+# x86_64-unknown-linux-musl:
+#     [target.x86_64-unknown-linux-musl]
+#     linker = "clang"
+#     rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+#
+# A per-target `rustflags` array REPLACES the RUSTFLAGS env var rather than
+# merging with it, so simply exporting RUSTFLAGS="-C target-feature=+crt-static"
+# has no effect here. Append crt-static to the existing array so the image's
+# own mold linker flags are preserved AND the binary links statically.
+#
+# Without this, the binary still dynamically requires /lib/ld-musl-x86_64.so.1.
+RUN sed -i \
+        's|rustflags = \["-C", "link-arg=-fuse-ld=mold"\]|rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "target-feature=+crt-static"]|' \
+        ~/.cargo/config.toml \
+    && grep -A2 'x86_64-unknown-linux-musl' ~/.cargo/config.toml
+
+# 3) Cache dependencies separately from the sources: copy the manifests, build a
+#    throwaway binary, then discard the stub source. This keeps the (slow)
+#    dependency compile in its own cached layer so source edits rebuild fast.
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo build --release --locked --target x86_64-unknown-linux-musl \
+    && rm -rf src
+
+# 4) Real sources. `touch` guarantees cargo notices the change even when the
+#    build context is served from a cached/stale layer.
+COPY src ./src
+RUN touch src/main.rs \
+    && cargo build --release --locked --target x86_64-unknown-linux-musl \
+    && cp target/x86_64-unknown-linux-musl/release/tcp-transfer /tcp-transfer \
+    && strip /tcp-transfer \
+    && echo "--- link check: no PT_INTERP segment means no runtime loader ---" \
+    && ! readelf -l /tcp-transfer 2>/dev/null | grep -q INTERP \
+    && echo "OK: statically linked"
+
+# ---------------------------------------------------------------------------
+# Minimal runtime image. Kept so `docker build` produces a runnable image too;
+# use the `docker cp` snippet above if you only want the raw binary.
+# ---------------------------------------------------------------------------
+FROM alpine:3.20
+
+RUN adduser -D -u 10001 app
+COPY --from=builder /tcp-transfer /usr/local/bin/tcp-transfer
+
+USER app
+WORKDIR /home/app
+
+# Usage: map the host port and point -t at the real backend.
+#   docker run --rm -p 444:444 tcp-transfer:linux \
+#     -l 0.0.0.0:444 -t 192.168.2.203:333
+ENTRYPOINT ["/usr/local/bin/tcp-transfer"]
+CMD ["-l", "0.0.0.0:444", "-t", "127.0.0.1:80"]

@@ -1,0 +1,10 @@
+# Build context exclusions for Dockerfile-linux
+target/
+.git/
+.gitignore
+.idea/
+.vscode/
+dist/
+*.swp
+Dockerfile*
+README*
