@@ -49,7 +49,7 @@ RUN sed -i \
 
 # 3) Cache dependencies separately from the sources: copy the manifests, build a
 #    throwaway binary, then discard the stub source. This keeps the (slow)
-#    dependency compile in its own cached layer so source edits rebuild fast.
+#    dependency compile in its own cached layer so source edits Dockerfile-linuxrebuild fast.
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src \
     && printf 'fn main() {}\n' > src/main.rs \
