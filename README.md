@@ -1,5 +1,7 @@
 # tcp-transfer
 
+> 🌐 **English version**: [README.en.md](README.en.md)
+
 轻量 TCP 端口转发工具，主要用于**测试场景**：把打进本机某个端口的连接，透明转发到另一台机器的另一个端口。
 
 ```
