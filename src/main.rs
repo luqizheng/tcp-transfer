@@ -14,7 +14,7 @@ async fn main() -> ExitCode {
     let listen = cli.listen;
     let target = cli.target_addr();
 
-    match proxy::run_forward(listen, target, cli.timeout).await {
+    match proxy::run_forward(listen, target, cli.timeout, cli.hex_dump, cli.dump_file).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!(error = %e, "forward exited with error");

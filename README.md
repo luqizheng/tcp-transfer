@@ -39,6 +39,8 @@ INFO tcp_transfer::proxy: listening listen=0.0.0.0:444 target=192.168.2.203:333 
 | `--timeout` | `-T` | | `0` | 空闲读超时（秒），0 = 不超时 |
 | `--log-level` | `-v` | | `info` | error / warn / info / debug / trace |
 | `--json-log` | | | false | 输出结构化 JSON 日志 |
+| `--hex-dump` | | | false | 把每个转发数据块以十六进制（如 `FF AC 0F`）打到日志 |
+| `--dump-file` | | | — | 把每个转发数据块以十六进制文本**追加写入指定文件**，如 `dump.txt` |
 
 监听地址和目标地址**都写成完整的 `host:port`**，不再拆成两个参数。
 
@@ -56,6 +58,9 @@ tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 -T 30 -v debug
 
 # 结构化 JSON 日志（便于被日志系统采集）
 tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --json-log
+
+# 把转发内容以十六进制写入文件（排查二进制协议时用）
+tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --dump-file dump.txt
 ```
 
 **IPv6 写法**（目标为 IPv6 时需要方括号）：
@@ -96,6 +101,52 @@ INFO tcp_transfer::proxy: stats total=1 active=0 bytes_in="0.00 B" bytes_out="1.
 
 **超时**
 `--timeout` 是**单次读的空闲上限**，不是整个连接的总时长。设为 `30` 表示某方向 30 秒没数据就断开该方向。长连接场景（如 SSH、WebSocket）建议保持默认 `0`。
+
+---
+
+## 数据转储（十六进制）
+
+排查自定义/二进制协议时，可以把转发的每个数据块以 `FF AC 0F` 形式（大写、空格分隔）输出。两种方式相互独立，可单独或同时使用：
+
+**打到日志（控制台）：**
+
+```bash
+tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --hex-dump
+```
+
+```
+INFO tcp_transfer::proxy: hex peer=127.0.0.1:62343 dir="in"  len=6 data=01 02 FF AC 0F 7A
+INFO tcp_transfer::proxy: hex peer=127.0.0.1:62343 dir="out" len=5 data=48 49 FF AC 0F
+```
+
+**写入文件（推荐用于大流量，不刷屏）：**
+
+```bash
+tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --dump-file dump.txt
+```
+
+`dump.txt` 内容（每行一个数据块，**追加写入**，重启不覆盖；程序运行中也可实时查看）：
+
+```
+ts=1791184962 peer=127.0.0.1:62343 dir=in  len=6 data=01 02 FF AC 0F 7A
+ts=1791184962 peer=127.0.0.1:62343 dir=out len=5 data=48 49 FF AC 0F
+```
+
+每行字段：
+
+| 字段 | 含义 |
+|---|---|
+| `ts` | Unix 时间戳（秒） |
+| `peer` | 客户端（监听侧对端）地址，多个连接可据此区分 |
+| `dir` | 方向：`in` = 客户端 → 目标，`out` = 目标 → 客户端（与统计口径一致） |
+| `len` | 本块字节数（单次读取最多 8 KiB） |
+| `data` | 大写、空格分隔的十六进制内容 |
+
+说明：
+
+- 转储发生在数据**成功写出之后**，不改变转发内容；转储写文件失败会被忽略，不影响转发本身。
+- 文件在启动时打开；**路径无法打开会立即报错退出**（如上级目录不存在）。
+- ⚠️ 全量转储高速流量会产生很大的日志/文件（每块最多 8 KiB，约 24 KB 文本），排查完请及时关闭。
 
 ---
 
@@ -143,13 +194,25 @@ docker run --rm -p 444:444 tcp-transfer:linux \
 >   -l 0.0.0.0:444 -t 192.168.2.203:333
 > ```
 
-### 本地原生构建
+### Windows（本机原生构建）
+
+在装有 Rust 工具链的 Windows 机器上（仓库根目录，PowerShell）：
+
+```powershell
+.\build-windows.ps1
+```
+
+脚本会执行 `cargo build --release`、把产物复制到 `dist\tcp-transfer.exe`，并运行 `--help` 做冒烟检查。要求本机已安装 Rust（`cargo` 在 PATH 中）。
+
+### 本地原生构建（手动）
 
 ```bash
 cargo build --release
 # 产物：target/release/tcp-transfer       (Linux/macOS)
 #       target/release/tcp-transfer.exe   (Windows)
 ```
+
+> Linux 侧的 Docker 静态构建也提供了等价的封装脚本 `build-linux.ps1`（Windows 上通过 Docker Desktop 构建），产物导出到 `dist\tcp-transfer`。
 
 ---
 

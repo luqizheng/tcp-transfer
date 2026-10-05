@@ -39,6 +39,8 @@ INFO tcp_transfer::proxy: listening listen=0.0.0.0:444 target=192.168.2.203:333 
 | `--timeout` | `-T` | | `0` | Idle read timeout (seconds). `0` = no timeout |
 | `--log-level` | `-v` | | `info` | error / warn / info / debug / trace |
 | `--json-log` | | | false | Emit structured JSON logs |
+| `--hex-dump` | | | false | Log every forwarded chunk as hex bytes (e.g. `FF AC 0F`) |
+| `--dump-file` | | | — | **Append** every forwarded chunk as hex text to the given file, e.g. `dump.txt` |
 
 Both the listen address and the target address are written as a complete `host:port` — they are no longer split into two flags.
 
@@ -56,6 +58,9 @@ tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 -T 30 -v debug
 
 # Structured JSON logs (for log collectors)
 tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --json-log
+
+# Write forwarded content as hex to a file (for debugging binary protocols)
+tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --dump-file dump.txt
 ```
 
 **IPv6 form** (brackets are required for IPv6 targets):
@@ -96,6 +101,52 @@ The process runs as a daemon and **will not exit because of a single connection 
 
 **Timeout**
 `--timeout` is the **per-read idle cap**, not a total connection lifetime. A value of `30` means: if either direction sees no data for 30 seconds, close that direction. For long-lived connections (SSH, WebSocket, etc.) keep the default `0`.
+
+---
+
+## Traffic Dump (Hexadecimal)
+
+When debugging custom/binary protocols, every forwarded chunk can be printed as `FF AC 0F` (uppercase, space-separated). The two outputs are independent and can be used separately or together:
+
+**To the log (console):**
+
+```bash
+tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --hex-dump
+```
+
+```
+INFO tcp_transfer::proxy: hex peer=127.0.0.1:62343 dir="in"  len=6 data=01 02 FF AC 0F 7A
+INFO tcp_transfer::proxy: hex peer=127.0.0.1:62343 dir="out" len=5 data=48 49 FF AC 0F
+```
+
+**To a file (recommended for heavy traffic — won't flood the console):**
+
+```bash
+tcp-transfer -l 0.0.0.0:444 -t 192.168.2.203:333 --dump-file dump.txt
+```
+
+Contents of `dump.txt` (one chunk per line, **appended**; restarts do not overwrite, and the file can be tailed while the program runs):
+
+```
+ts=1791184962 peer=127.0.0.1:62343 dir=in  len=6 data=01 02 FF AC 0F 7A
+ts=1791184962 peer=127.0.0.1:62343 dir=out len=5 data=48 49 FF AC 0F
+```
+
+Per-line fields:
+
+| Field | Meaning |
+|---|---|
+| `ts` | Unix timestamp (seconds) |
+| `peer` | Client (remote peer on the listener side); use it to tell concurrent connections apart |
+| `dir` | Direction: `in` = client → target, `out` = target → client (consistent with the stats counters) |
+| `len` | Chunk size in bytes (a single read is at most 8 KiB) |
+| `data` | Uppercase, space-separated hexadecimal content |
+
+Notes:
+
+- Dumping happens **after** the data is successfully written out, so it never alters forwarded content; file write failures are ignored and never break forwarding.
+- The file is opened at startup; **an unopenable path fails fast** (e.g. a missing parent directory).
+- ⚠️ Full dumps of high-speed traffic produce very large logs/files (each up-to-8 KiB chunk yields ~24 KB of text). Turn it off once you're done.
 
 ---
 
@@ -143,13 +194,25 @@ docker run --rm -p 444:444 tcp-transfer:linux \
 >   -l 0.0.0.0:444 -t 192.168.2.203:333
 > ```
 
-### Native build on the host
+### Windows (native build)
+
+On a Windows machine with the Rust toolchain installed (repo root, PowerShell):
+
+```powershell
+.\build-windows.ps1
+```
+
+The script runs `cargo build --release`, copies the artifact to `dist\tcp-transfer.exe`, and runs `--help` as a smoke check. It requires Rust to be installed locally (`cargo` on PATH).
+
+### Native build on the host (manual)
 
 ```bash
 cargo build --release
 # Output: target/release/tcp-transfer       (Linux/macOS)
 #         target/release/tcp-transfer.exe   (Windows)
 ```
+
+> The Linux Docker-based static build also has an equivalent wrapper script, `build-linux.ps1` (run via Docker Desktop on Windows), which exports the artifact to `dist\tcp-transfer`.
 
 ---
 

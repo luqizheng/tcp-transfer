@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 /// Lightweight TCP port forwarder for testing.
 #[derive(Parser, Debug)]
@@ -24,6 +25,14 @@ pub struct Cli {
     /// Emit structured JSON logs (useful for log shippers)
     #[arg(long = "json-log")]
     pub json_log: bool,
+
+    /// Log every forwarded chunk as hex bytes, e.g. "FF AC 0F"
+    #[arg(long = "hex-dump")]
+    pub hex_dump: bool,
+
+    /// Append every forwarded chunk as hex lines to this file, e.g. dump.txt
+    #[arg(long = "dump-file", value_name = "PATH")]
+    pub dump_file: Option<PathBuf>,
 }
 
 impl Cli {
