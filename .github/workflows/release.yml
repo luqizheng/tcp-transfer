@@ -1,0 +1,85 @@
+# 仅在推送 tag 时触发发布（支持 0.1.0 与 v0.1.0 两种写法）
+# 用法：git tag 0.1.0 && git push origin 0.1.0
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  build-linux:
+    name: Build Linux (musl static)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Build (static)
+        run: cargo build --release --target x86_64-unknown-linux-musl
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/tcp-transfer \
+             "dist/tcp-transfer-${GITHUB_REF_NAME}-linux-amd64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-amd64
+          path: dist/*
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/tcp-transfer.exe `
+            "dist/tcp-transfer-$env:GITHUB_REF_NAME-windows-amd64.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify binary is static (no PT_INTERP)
+        run: |
+          readelf -l dist/tcp-transfer-*-linux-amd64 | grep -q INTERP \
+            && { echo "unexpected PT_INTERP: binary is not static"; exit 1; } \
+            || echo "static ok"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
